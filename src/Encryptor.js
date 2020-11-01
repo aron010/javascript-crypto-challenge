@@ -6,9 +6,10 @@ module.exports = (key) => {
   }
 
   return Object.freeze({
-    encrypt: (msg, nonce) => {
-    // let key = sodium.crypto_secretbox_keygen();
-    return sodium.crypto_secretbox_easy(msg, nonce, key);
+    encrypt: (msg) => {
+      let nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+      let ciphertext = sodium.crypto_secretbox_easy(msg, nonce, key);
+      return { ciphertext, nonce };
     }
   });
 }

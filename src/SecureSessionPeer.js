@@ -2,36 +2,70 @@ const sodium = require('libsodium-wrappers')
 const decryptor = require("./Decryptor")
 const encryptor = require("./Encryptor")
 
-module.exports = async() =>
+module.exports = async (peer) =>
 {
 
   await sodium.ready;
-  const { publicKey, privateKey } = sodium.crypto_sign_keypair();
-  let key = sodium.crypto_secretbox_keygen();
-  let encrypter = encryptor(key);
-  let decrypter = decryptor(key);
-    return Object.freeze(
-        {
-            publicKey: publicKey,
-            sendMessage: null,
-           
-            send: (peerMsg) => {
-              this.sendMessage = peerMsg;
+  let keys = sodium.crypto_kx_keypair();
+  let encrypter;
+  let decrypter;
+  let sharedKeys;
+  let otherPeer = peer;
+  let msgList = [];
+
+  let initConnection = (_otherPeer) => {
+    otherPeer = _otherPeer;
+    sharedKeys = sodium.crypto_kx_server_session_keys(
+      keys.publicKey,
+      keys.privateKey,
+      otherPeer.publicKey
+    );
+    initCrypto(sharedKeys.sharedTx, sharedKeys.sharedRx);
+    otherPeer.connect(self); //connect otherPeer to current Peer
+  };
+
+  let initCrypto = async (encryptKey, decryptKey) => {
+    encrypter = await encryptor(encryptKey);
+    decrypter = await decryptor(decryptKey);
+  };
+
+ 
+
+    let self = Object.freeze(
+          {
+            publicKey: keys.publicKey,
+
+            connect: async (connectedPeer) => {
+              otherPeer = connectedPeer;
+              sharedKeys = sodium.crypto_kx_client_session_keys(
+                keys.publicKey,
+                keys.privateKey,
+                otherPeer.publicKey
+              );
+              initCrypto(sharedKeys.sharedTx, sharedKeys.sharedRx);
+            },
+
+            send: (msg) => {
+              const encrypt = self.encrypt(msg);
+              otherPeer.addToMsgQueue(encrypt);
             },
 
             receive: () => {
-              return this.sendMessage;
+              if (msgList.length <= 0) throw "No new messages";
+              const msgFromList = msgList.shift();
+              const msg = self.decrypt(msgFromList.ciphertext, msgFromList.nonce);
+              return msg;
             },
 
-            encrypt: (msg) => {
-              const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
-              const ciphertext = encrypter.encrypt(msg, nonce);
-              return { ciphertext, nonce };
-            },
+            encrypt: (msg) =>  encrypter.encrypt(msg),
+              
+            decrypt: (ciphertext, nonce) => decrypter.decrypt(ciphertext, nonce),
             
-            decrypt: (ciphertext, nonce) => {
-             return decrypter.decrypt(ciphertext, nonce)
-            },
+            addToMsgQueue: (msg) => msgList.push(msg),
           }
-      );
-}
+      ); 
+      
+      if (peer) initConnection(peer);
+      
+      return self;
+};
